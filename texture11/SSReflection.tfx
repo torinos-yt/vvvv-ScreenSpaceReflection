@@ -1,0 +1,120 @@
+//@author: vux
+//@help: template for texture fx
+//@tags: texture
+//@credits:
+
+#if !defined(MAXLOOP)
+	#define MAXLOOP 50
+#endif
+
+Texture2D coltex : PREVIOUS;
+Texture2D depthtex<string uiname = "Depth Tex";>;
+Texture2D normtex<string uiname = "Normal Tex";>;
+
+
+float4x4 InvVP;
+float4x4 View;
+float4x4 VP;
+
+float _Thickness = 0.003f;
+bool IsJitter = 0;
+float Time;
+float rayLengthCoeff = 0.052f;
+
+SamplerState linearSampler : IMMUTABLE
+{
+	Filter = MIN_MAG_MIP_LINEAR;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+
+float3 MakeCamPos(float4x4 View){
+	float tx = -dot(View[0], View[3]);
+	float ty = -dot(View[1], View[3]);
+	float tz = -dot(View[2], View[3]);
+	return float3(tx, ty, tz);
+}
+
+float rand(float2 co)
+{
+	return frac(sin(dot(co.xy, float2(12.9898, 78.233))) * 43758.5453);
+}
+
+struct psInput
+{
+	float4 p : SV_Position;
+	float2 uv : TEXCOORD0;
+};
+
+
+float4 reflection(psInput i) : SV_Target
+{
+	float4 depth = depthtex.Sample(linearSampler,i.uv);
+	float2 screenpos = 2.0 * i.uv - 1.0;
+	float4 pos = mul(float4(screenpos.x, -screenpos.y, depth.r, 1.0), InvVP);
+	pos /= pos.w;
+	float3 camDir = normalize(pos.xyz - MakeCamPos(View));
+	float3 Normal = normtex.Sample(linearSampler, i.uv).xyz;
+	float3 refDir = reflect(camDir, Normal);
+	
+	int lod = 0;
+	int calc = 0;
+	float3 ray = pos.xyz;
+	float4 ref =  ref = float4(0,0,0,0);
+	float worldDepth;
+	
+	
+	for(int n = 1; n < MAXLOOP; n++){
+		float3 _step = refDir * rayLengthCoeff;
+		ray += _step * (1 + rand(i.uv + Time) * IsJitter);
+		
+		float4 rayScreen = mul(float4(ray, 1.0), VP);
+		float2 rayUV = rayScreen.xy / rayScreen.w * .5 + .5;
+		rayUV.y = 1 - rayUV.y;
+		float rayDepth = rayScreen.z / rayScreen.w;
+		worldDepth = depthtex.SampleLevel(linearSampler, rayUV, 0).x;
+		
+		if(rayDepth > worldDepth){
+			if(rayDepth - _Thickness < worldDepth){
+				float sign = -1.0;
+				for (int m = 1; m <= 10; ++m)
+				{
+					ray += sign * pow(0.5, m) * _step;
+					float4 rayScreen = mul(float4(ray, 1.0), VP);
+					float2 rayUV = rayScreen.xy / rayScreen.w * .5 + .5;
+					rayUV.y = 1 - rayUV.y;
+					float rayDepth = rayScreen.z / rayScreen.w;
+					worldDepth = depthtex.SampleLevel(linearSampler, rayUV, 0).x;
+					sign = (rayDepth > worldDepth) ? -1 : 1;
+				}
+				ref = coltex.SampleLevel(linearSampler, rayUV, 0);
+				break;
+			}
+		}
+		
+	}
+	
+	/*pos = mul(pos, VP);
+	pos = pos/pos.w;
+	
+	float4 col = ref;
+	if(ViewMode == 0)col = ref;
+	if(ViewMode == 1)col = float4((Normal.xyz * .5 + .5), 1);
+	if(ViewMode == 2)col = float4((refDir.xyz), 1);
+	if(ViewMode == 3)col = pos;
+	if(ViewMode == 4)col = float4((camDir.xyz), 1);
+	*/
+	return ref;
+}
+
+technique10 Process
+{
+	pass P0
+	{
+		SetPixelShader(CompileShader(ps_4_0,reflection()));
+	}
+}
+
+
+
