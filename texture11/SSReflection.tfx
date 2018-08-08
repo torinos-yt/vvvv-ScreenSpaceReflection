@@ -92,7 +92,7 @@ float4 reflection(psInput i) : SV_Target
 	}
 	
 	
-	return ref;
+	return max(ref, 0.0);
 }
 
 technique10 Process
